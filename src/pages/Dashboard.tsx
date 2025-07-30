@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
@@ -21,11 +21,13 @@ import {
   Calendar,
   BarChart2,
   Percent,
-  Layers
+  Layers,
+  Loader2
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { MODEL_CONFIGS, ModelId } from '@/config/models';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, ReferenceLine, ReferenceArea, AreaChart, Area } from 'recharts';
+import { exportDashboardToPDF } from '@/services/dashboardPdfExport';
 import { mapPeriodsToSections, ChartSection } from '@/utils/chartSectionUtils';
 import { useCalculationResult } from '@/contexts/CalculationResultContext';
 import { CalculationResult } from '@/services/api';
@@ -343,6 +345,8 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarVisible, setSidebarVisible] = useState(false);
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const dashboardContentRef = useRef<HTMLDivElement>(null);
   const [sensitivityScenario, setSensitivityScenario] = useState('base');
   const [sensitivityValues, setSensitivityValues] = useState({
     base: { revenueGrowth: 0, operatingMargin: 0, capex: 0, workingCapitalDays: 0, taxRate: 0, wacc: 0, terminalGrowth: 0 },
@@ -650,6 +654,58 @@ export default function Dashboard() {
     window.location.reload();
   };
 
+  const handleExportPDF = async () => {
+    if (!dashboardContentRef.current) {
+      toast({
+        title: "Export Error",
+        description: "Dashboard content not found. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsExportingPDF(true);
+    
+    try {
+      const pdfBlob = await exportDashboardToPDF(
+        DASHBOARD_TABS,
+        activeTab,
+        setActiveTab,
+        dashboardContentRef,
+        {
+          title: `${getModelName()} Financial Dashboard`,
+          subtitle: 'Comprehensive Financial Analysis and Projections',
+          companyName: 'Financial Modeling Suite',
+          quality: 'high'
+        }
+      );
+
+      // Create download link
+      const url = URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${getModelName()}_Dashboard_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Export Successful",
+        description: "Dashboard PDF has been downloaded successfully.",
+      });
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      toast({
+        title: "Export Failed",
+        description: "Failed to export PDF. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingPDF(false);
+    }
+  };
+
   const handleSliderChange = (key: SensitivityKey, value: string) => {
     const newValue = parseFloat(value);
     console.log(`Slider changed: ${key} = ${newValue} for scenario: ${sensitivityScenario}`);
@@ -769,9 +825,18 @@ export default function Dashboard() {
               <Badge variant="secondary">Results</Badge>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4 mr-2" />
-                Export
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleExportPDF}
+                disabled={isExportingPDF}
+              >
+                {isExportingPDF ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                {isExportingPDF ? 'Exporting...' : 'Export to PDF'}
               </Button>
               <Button variant="outline" size="sm" onClick={handleRefresh}>
                 <RefreshCw className="h-4 w-4 mr-2" />
@@ -781,7 +846,7 @@ export default function Dashboard() {
           </header>
 
           {/* Dashboard Content */}
-          <div className="flex-1 p-6">
+          <div className="flex-1 p-6 pdf-export" ref={dashboardContentRef}>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               {/* 🏢 Business Overview */}
               <TabsContent value="overview" className="space-y-6">
